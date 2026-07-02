@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iskcon-video-editor"
+version = "0.1.0"
+description = "Production-ready skeleton for ISKCON NRJD Video Editor"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "ISKCON NRJD Media Team" }]
+license = { text = "MIT" }
+dependencies = [
+  "typer>=0.12.3,<1.0.0",
+  "rich>=13.7.1,<14.0.0",
+  "loguru>=0.7.2,<1.0.0",
+  "PyYAML>=6.0.1,<7.0.0",
+  "opencv-python>=4.10.0.84,<5.0.0",
+  "Pillow>=10.3.0,<11.0.0",
+  "numpy>=1.26.4,<3.0.0",
+  "tqdm>=4.66.4,<5.0.0",
+  "ImageHash>=4.3.1,<5.0.0",
+  "python-dotenv>=1.0.1,<2.0.0",
+  "ffmpeg-python>=0.2.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=24.4.2,<25.0.0",
+  "ruff>=0.5.0,<1.0.0",
+  "pytest>=8.2.0,<9.0.0",
+  "pyinstaller>=6.10.0,<7.0.0",
+]
+
+[project.scripts]
+iskcon-video-editor = "main:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "RUF"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+addopts = "-q"
+testpaths = ["tests"]

@@ -1,0 +1,22 @@
+# Sample profile-focused configuration overrides.
+video_render:
+  color_preset: cinematic
+  stabilization_enabled: true
+  duck_original_audio: 0.30
+  transition_probabilities:
+    hard_cut: 0.08
+    cross_dissolve: 0.32
+    film_burn: 0.16
+    fade_through_black: 0.22
+    zoom: 0.10
+    slide: 0.07
+    blur: 0.05
+  profiles:
+    social-fast:
+      color_preset: natural
+      short:
+        target_duration: 35
+    temple-documentary:
+      color_preset: temple
+      long:
+        target_duration: 510
