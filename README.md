@@ -1,9 +1,5 @@
 # ISKCON NRJD Video Editor
 
-![Banner Placeholder](docs/assets/banner-placeholder.png)
-
-![Logo Placeholder](docs/assets/logo-placeholder.png)
-
 Production-focused, headless media automation toolkit for devotional event content.
 
 This project helps you organize, review, and render high-quality videos from local media folders using a CLI-first workflow and FFmpeg.
