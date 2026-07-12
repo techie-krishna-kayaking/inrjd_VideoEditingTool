@@ -105,31 +105,27 @@ class LongPicturesWorkflow:
         max_duration = float(self._settings.long.duration.maximum)
         target_duration = _clamp(float(profile_cfg.get("target_duration", default_duration)), min_duration, max_duration)
 
-        min_image_duration = float(profile_cfg.get("image_duration_min", 1.2))
-        max_image_duration = float(profile_cfg.get("image_duration_max", 8.0))
-        auto_duration = _clamp(target_duration / max(1, len(ordered_images)), min_image_duration, max_image_duration)
-
         transition_selector = _TransitionSelector(
             random_source=self._rng,
             probabilities=self._load_transition_probabilities(profile_cfg),
             enabled=self._settings.transitions,
         )
-        transition = transition_selector.choose()
 
-        logger.info("Building Timeline | event={} order={} image_duration={:.3f}", event_name, order_mode, auto_duration)
+        logger.info("Building Timeline | event={} order={} image_duration_mode=random_buckets", event_name, order_mode)
 
         fit_mode = str(profile_cfg.get("fit_mode", "center_crop"))
         timeline = self._build_timeline(
             images=ordered_images,
-            transition_label=transition.label,
+            transition_label="cross_dissolve",
             target_duration=target_duration,
-            image_duration=auto_duration,
             fit_mode=fit_mode,
         )
 
         if not timeline.clips:
             logger.warning("Skipped event with empty timeline after validation | event={}", event_name)
             return None
+
+        transition_plan = transition_selector.choose_many(max(0, len(timeline.clips) - 1))
 
         output_name = f"{event_name}-long-pictures.mp4"
         output_path = output_dir / output_name
@@ -143,7 +139,7 @@ class LongPicturesWorkflow:
         started = time.perf_counter()
         self._render_timeline_video(
             timeline=timeline,
-            transition=transition,
+            transition_plan=transition_plan,
             output_path=output_path,
             event_name=event_name,
             music_plan=music_plan,
@@ -162,7 +158,7 @@ class LongPicturesWorkflow:
             "image_order_mode": order_mode,
             "music_tracks_used": [str(item["path"]) for item in music_plan],
             "duration": round(timeline.total_duration, 3),
-            "transitions": [transition.label],
+            "transitions": [choice.label for choice in transition_plan],
             "render_time": round(render_time, 3),
             "thumbnail_path": str(thumbnail_path),
             "output_file": str(output_path),
@@ -184,7 +180,6 @@ class LongPicturesWorkflow:
         images: list[Path],
         transition_label: str,
         target_duration: float,
-        image_duration: float,
         fit_mode: str,
     ) -> Timeline:
         """Build image-only timeline using reusable slideshow engine."""
@@ -205,10 +200,11 @@ class LongPicturesWorkflow:
                 skip_duplicates=True,
             ),
             duration_options=DurationOptions(
-                image_duration=image_duration,
-                random_duration=False,
-                minimum=image_duration,
-                maximum=image_duration,
+                image_duration=1.0,
+                random_duration=True,
+                minimum=0.5,
+                maximum=1.5,
+                duration_choices=(0.5, 1.0, 1.5),
             ),
             animation_options=AnimationOptions(
                 enabled=True,
@@ -228,7 +224,7 @@ class LongPicturesWorkflow:
     def _render_timeline_video(
         self,
         timeline: Timeline,
-        transition: _TransitionChoice,
+        transition_plan: list[_TransitionChoice],
         output_path: Path,
         event_name: str,
         music_plan: list[dict[str, Any]],
@@ -262,7 +258,7 @@ class LongPicturesWorkflow:
             width=width,
             height=height,
             fps=fps,
-            transition=transition,
+            transition_plan=transition_plan,
             transition_duration=transition_duration,
             title_text=event_name,
             ending_text=str(profile_cfg.get("ending_text", "Hare Krishna")),
@@ -315,7 +311,7 @@ class LongPicturesWorkflow:
         width: int,
         height: int,
         fps: int,
-        transition: _TransitionChoice,
+        transition_plan: list[_TransitionChoice],
         transition_duration: float,
         title_text: str,
         ending_text: str,
@@ -349,8 +345,11 @@ class LongPicturesWorkflow:
             nxt = clip_labels[index]
             out = f"x{index}"
             offset = max(0.0, elapsed - transition_duration)
-            transition_name = transition.ffmpeg_name if transition.label != "hard_cut" else "fade"
-            duration = transition_duration if transition.label != "hard_cut" else 0.001
+            plan_transition = transition_plan[index - 1] if index - 1 < len(transition_plan) else _TransitionChoice(
+                "cross_dissolve", "fade"
+            )
+            transition_name = plan_transition.ffmpeg_name if plan_transition.label != "hard_cut" else "fade"
+            duration = transition_duration if plan_transition.label != "hard_cut" else 0.001
             parts.append(
                 f"[{current}][{nxt}]xfade=transition={transition_name}:duration={duration}:offset={offset}[{out}]"
             )
@@ -637,6 +636,12 @@ class _TransitionSelector:
         chosen = self._rng.choices(candidates, weights=weights, k=1)[0]
         self._last = chosen
         return self._mapping[chosen]
+
+    def choose_many(self, count: int) -> list[_TransitionChoice]:
+        """Pick a transition sequence for consecutive clip boundaries."""
+        if count <= 0:
+            return []
+        return [self.choose() for _ in range(count)]
 
 
 def _zoompan_expressions(animation_name: str, zoom: float) -> tuple[str, str, str]:

@@ -38,6 +38,7 @@ class DurationOptions:
     random_duration: bool = False
     minimum: float = 1.2
     maximum: float = 2.2
+    duration_choices: tuple[float, ...] | None = None
 
 
 class TimelineBuilder:
@@ -92,6 +93,10 @@ class TimelineBuilder:
 def _pick_duration(duration_options: DurationOptions, rng: random.Random) -> float:
     """Pick clip duration from fixed or random range."""
     if duration_options.random_duration:
+        if duration_options.duration_choices:
+            choices = [max(0.1, float(item)) for item in duration_options.duration_choices]
+            if choices:
+                return rng.choice(choices)
         minimum = max(0.1, duration_options.minimum)
         maximum = max(minimum, duration_options.maximum)
         return rng.uniform(minimum, maximum)

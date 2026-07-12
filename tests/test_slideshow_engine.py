@@ -136,3 +136,36 @@ def test_slideshow_engine_builds_timeline_objects_only(tmp_path: Path) -> None:
     assert "name" in first_clip.animation
     assert isinstance(first_clip.image_path, Path)
     assert "ffmpeg" not in str(first_clip)
+
+
+def test_slideshow_engine_uses_discrete_duration_choices(tmp_path: Path) -> None:
+    """Slideshow engine should draw random durations from provided discrete choices."""
+    image_a = tmp_path / "a.jpg"
+    image_b = tmp_path / "b.jpg"
+    _write_image(image_a, 1800, 1200, color=(210, 130, 100))
+    _write_image(image_b, 1200, 1800, color=(100, 130, 210))
+
+    engine = SlideshowEngine(cache_dir=tmp_path / "cache", random_seed=5)
+    result = engine.build(
+        image_paths=[image_a, image_b],
+        options=SlideshowOptions(
+            target_duration=5.0,
+            target_width=1280,
+            target_height=720,
+            transition_type="cross_dissolve",
+        ),
+        validation_options=ValidationOptions(min_width=640, min_height=640, skip_duplicates=True),
+        duration_options=DurationOptions(
+            random_duration=True,
+            minimum=0.5,
+            maximum=1.5,
+            duration_choices=(0.5, 1.0, 1.5),
+        ),
+        animation_options=AnimationOptions(enabled=True, random_per_image=True),
+        color_options=ColorEffectOptions(),
+    )
+
+    allowed = {0.5, 1.0, 1.5}
+    for clip in result.timeline.clips[:-1]:
+        assert clip.duration in allowed
+    assert all(0.1 <= clip.duration <= 1.5 for clip in result.timeline.clips)

@@ -89,6 +89,43 @@ build_macos.py           macOS packaging script
 main.py                  CLI entrypoint
 ```
 
+## CLI Quick Reference
+
+Default behavior is batch mode.
+
+One-command option:
+
+- `python main.py make-videos`
+  - Runs full pipeline in one command: organize + edit/render + final publish.
+  - Batch mode by default (all folders), one-by-one.
+
+Two-step option (recommended when you want manual control):
+
+- `python main.py organize`
+  - Step 1: Organize all folders from `raw_data` into input buckets.
+- `python main.py render-final-videos`
+  - Step 2: Edit, render, and publish final videos for all organized folders.
+
+Specific folder in two-step mode:
+
+- `python main.py organize --event "2026-Sample-Festival"`
+- `python main.py render-final-videos --event "2026-Sample-Festival"`
+
+- `python main.py make-videos`
+  - One command pipeline.
+  - Step 1: Organizes all events from `raw_data` into input buckets (batch mode).
+  - Step 2: For each event, runs all 4 renders in sequence, then moves to next event.
+  - Step 3: Publishes final files directly under `output/`.
+- `python main.py make-videos --event "2026-Sample-Festival"`
+  - Same pipeline, but only for one specific event folder.
+
+Final output naming convention in `output/`:
+
+- `<folder_name>_pictures_short.mp4`
+- `<folder_name>_pictures_long.mp4`
+- `<folder_name>_short_main.mp4`
+- `<folder_name>_long_main.mp4`
+
 ## Setup Guide
 
 ## Setup on macOS
@@ -199,20 +236,27 @@ Run these in order for a normal production flow.
 python main.py version
 ```
 
-2. Organize media into event buckets.
+2. Run complete pipeline with one command.
+
+Default: all folders in batch mode.
 
 ```bash
-python main.py organize --all
+python main.py make-videos
 ```
 
-Optional organizer commands:
+One specific folder:
 
 ```bash
-python main.py organize --event "2026-Sample-Festival"
-python main.py organize --event "2026-Sample-Festival" --copy
-python main.py organize --event "2026-Sample-Festival" --move
-python main.py organize --event "2026-Sample-Festival" --link
+python main.py make-videos --event "2026-Sample-Festival"
 ```
+
+Per-event sequence:
+
+1. organize
+2. pictures short render
+3. pictures long render
+4. short main render
+5. long main render
 
 3. Review media interactively.
 
@@ -233,36 +277,31 @@ python main.py review --event "2026-Sample-Festival" --filter-portrait-images
 python main.py review --event "2026-Sample-Festival" --filter-landscape-images
 ```
 
-4. Render short videos from pictures.
+3. (Optional) Run individual commands manually when debugging.
 
 ```bash
+python main.py organize --event "2026-Sample-Festival"
 python main.py render-shorts-pictures --event "2026-Sample-Festival"
-```
-
-5. Render long video from pictures.
-
-```bash
 python main.py render-long-pictures --event "2026-Sample-Festival"
-python main.py render-long-pictures --event "2026-Sample-Festival" --profile cinematic-festival
-```
-
-6. Render short videos from source videos (unified video engine).
-
-```bash
 python main.py render-short-videos --event "2026-Sample-Festival"
-python main.py render-short-videos --event "2026-Sample-Festival" --profile fast-preview
-python main.py render-short-videos --event "2026-Sample-Festival" --dry-run
+python main.py render-long-videos --event "2026-Sample-Festival"
 ```
 
-7. Render long video from source videos (unified video engine).
+4. Inspect outputs and reports.
+
+Alternative: run in 2 command steps.
 
 ```bash
-python main.py render-long-videos --event "2026-Sample-Festival"
-python main.py render-long-videos --event "2026-Sample-Festival" --profile cinematic-festival
-python main.py render-long-videos --event "2026-Sample-Festival" --dry-run
+python main.py organize
+python main.py render-final-videos
 ```
 
-8. Inspect outputs and reports.
+For one specific folder:
+
+```bash
+python main.py organize --event "2026-Sample-Festival"
+python main.py render-final-videos --event "2026-Sample-Festival"
+```
 
 - Render outputs: output/shorts and output/long
 - Reports: output/reports
@@ -273,6 +312,8 @@ python main.py render-long-videos --event "2026-Sample-Festival" --dry-run
 
 ```bash
 python main.py version
+python main.py make-videos
+python main.py render-final-videos
 python main.py organize
 python main.py review
 python main.py render-shorts-pictures

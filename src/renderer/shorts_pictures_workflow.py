@@ -141,17 +141,18 @@ class ShortsPicturesWorkflow:
             output_path = output_dir / output_name
 
             part_started = time.perf_counter()
-            transition = transitions.choose()
 
             timeline = self._build_timeline(
                 images=chunk,
-                transition_label=transition.label,
+                transition_label="cross_dissolve",
                 target_duration=target_duration,
             )
 
             if not timeline.clips:
                 logger.warning("Skipped empty timeline | event={} part={}", event_name, part_label)
                 continue
+
+            transition_plan = transitions.choose_many(max(0, len(timeline.clips) - 1))
 
             music_used = self._rng.choice(music_files) if music_files else None
 
@@ -161,7 +162,7 @@ class ShortsPicturesWorkflow:
 
             self._render_timeline_video(
                 timeline=timeline,
-                transition=transition,
+                transition_plan=transition_plan,
                 output_path=output_path,
                 music_path=music_used,
                 title_text=event_name.upper(),
@@ -175,7 +176,7 @@ class ShortsPicturesWorkflow:
                 "output_file": str(output_path),
                 "images_used": [str(item.image_path) for item in timeline.clips],
                 "music_used": str(music_used) if music_used else None,
-                "transitions_used": [transition.label],
+                "transitions_used": [choice.label for choice in transition_plan],
                 "render_time_seconds": round(part_elapsed, 3),
             }
             cast_list = report_payload.get("parts")
@@ -210,9 +211,10 @@ class ShortsPicturesWorkflow:
             ),
             duration_options=DurationOptions(
                 image_duration=self._settings.images.image_duration,
-                random_duration=False,
-                minimum=1.2,
-                maximum=2.2,
+                random_duration=True,
+                minimum=0.5,
+                maximum=1.5,
+                duration_choices=(0.5, 1.0, 1.5),
             ),
             animation_options=AnimationOptions(
                 enabled=True,
@@ -232,7 +234,7 @@ class ShortsPicturesWorkflow:
     def _render_timeline_video(
         self,
         timeline: Timeline,
-        transition: _TransitionChoice,
+        transition_plan: list[_TransitionChoice],
         output_path: Path,
         music_path: Path | None,
         title_text: str,
@@ -278,7 +280,7 @@ class ShortsPicturesWorkflow:
             width=width,
             height=height,
             fps=fps,
-            transition=transition,
+            transition_plan=transition_plan,
             transition_duration=transition_duration,
             title_text=title_text,
         )
@@ -337,7 +339,7 @@ class ShortsPicturesWorkflow:
         width: int,
         height: int,
         fps: int,
-        transition: _TransitionChoice,
+        transition_plan: list[_TransitionChoice],
         transition_duration: float,
         title_text: str,
     ) -> str:
@@ -369,8 +371,11 @@ class ShortsPicturesWorkflow:
             next_label = clip_labels[index]
             out_label = f"x{index}"
             offset = max(0.0, elapsed - transition_duration)
-            transition_name = transition.ffmpeg_name if transition.label != "hard_cut" else "fade"
-            duration = transition_duration if transition.label != "hard_cut" else 0.001
+            plan_transition = transition_plan[index - 1] if index - 1 < len(transition_plan) else _TransitionChoice(
+                "cross_dissolve", "fade"
+            )
+            transition_name = plan_transition.ffmpeg_name if plan_transition.label != "hard_cut" else "fade"
+            duration = transition_duration if plan_transition.label != "hard_cut" else 0.001
 
             parts.append(
                 f"[{current_label}][{next_label}]xfade=transition={transition_name}:duration={duration}:offset={offset}[{out_label}]"
@@ -518,6 +523,12 @@ class _TransitionSelector:
         chosen = self._rng.choices(candidates, weights=weights, k=1)[0]
         self._last = chosen
         return self._mapping[chosen]
+
+    def choose_many(self, count: int) -> list[_TransitionChoice]:
+        """Pick a transition sequence for consecutive clip boundaries."""
+        if count <= 0:
+            return []
+        return [self.choose() for _ in range(count)]
 
 
 def _zoompan_expressions(animation_name: str, zoom: float) -> tuple[str, str, str]:

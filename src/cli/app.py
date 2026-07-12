@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 
 from src.config.config_models import Settings
+from src.cli.make_videos_command import run_make_videos_command, run_render_final_videos_command
 from src.cli.organize_command import run_organizer_command
 from src.cli.render_long_videos_command import run_render_long_videos_command
 from src.cli.render_long_pictures_command import run_render_long_pictures_command
@@ -34,8 +35,8 @@ def create_cli(settings: Settings) -> typer.Typer:
 
     @app.command("organize")
     def organize(
-        event: str | None = typer.Option(None, "--event", help="Organize one event only."),
-        all_events: bool = typer.Option(False, "--all", help="Organize all events from analyzer report."),
+        event: str | None = typer.Option(None, "--event", help="Organize one event only (default: all events)."),
+        all_events: bool = typer.Option(False, "--all", help="Deprecated. Batch mode is default when --event is not provided."),
         copy_mode: bool = typer.Option(False, "--copy", help="Force copy mode."),
         move_mode: bool = typer.Option(False, "--move", help="Force move mode."),
         link_mode: bool = typer.Option(False, "--link", help="Force symbolic-link mode."),
@@ -146,6 +147,40 @@ def create_cli(settings: Settings) -> typer.Typer:
     ) -> None:
         """Render long-form output from longform_videos using unified video engine."""
         exit_code = run_render_long_videos_command(
+            settings=settings,
+            event_name=event,
+            profile=profile,
+            dry_run=dry_run,
+            console=console,
+        )
+        if exit_code != 0:
+            raise typer.Exit(code=exit_code)
+
+    @app.command("make-videos")
+    def make_videos(
+        event: str | None = typer.Option(None, "--event", help="Render one event only (default: all events in batch)."),
+        profile: str | None = typer.Option(None, "--profile", help="Optional YAML profile name for video workflows."),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Preview unified video timelines without ffmpeg rendering."),
+    ) -> None:
+        """Run one-command pipeline: organize first, then render all 4 outputs per event."""
+        exit_code = run_make_videos_command(
+            settings=settings,
+            event_name=event,
+            profile=profile,
+            dry_run=dry_run,
+            console=console,
+        )
+        if exit_code != 0:
+            raise typer.Exit(code=exit_code)
+
+    @app.command("render-final-videos")
+    def render_final_videos(
+        event: str | None = typer.Option(None, "--event", help="Render one event only (default: all events in batch)."),
+        profile: str | None = typer.Option(None, "--profile", help="Optional YAML profile name for video workflows."),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Preview unified video timelines without ffmpeg rendering."),
+    ) -> None:
+        """Step-2 command: render/publish final videos after running organize."""
+        exit_code = run_render_final_videos_command(
             settings=settings,
             event_name=event,
             profile=profile,
