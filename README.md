@@ -95,28 +95,30 @@ Default behavior is batch mode.
 
 One-command option:
 
-- `python main.py make-videos`
+- `python3 main.py make-videos`
   - Runs full pipeline in one command: organize + edit/render + final publish.
   - Batch mode by default (all folders), one-by-one.
+  - Starts from `raw_data/` and organizes into `input/` first.
+  - If analyzer report is missing, it is auto-generated from `raw_data/`.
 
 Two-step option (recommended when you want manual control):
 
-- `python main.py organize`
+- `python3 main.py organize`
   - Step 1: Organize all folders from `raw_data` into input buckets.
-- `python main.py render-final-videos`
+- `python3 main.py render-final-videos`
   - Step 2: Edit, render, and publish final videos for all organized folders.
 
 Specific folder in two-step mode:
 
-- `python main.py organize --event "2026-Sample-Festival"`
-- `python main.py render-final-videos --event "2026-Sample-Festival"`
+- `python3 main.py organize --event "2026-Sample-Festival"`
+- `python3 main.py render-final-videos --event "2026-Sample-Festival"`
 
-- `python main.py make-videos`
+- `python3 main.py make-videos`
   - One command pipeline.
   - Step 1: Organizes all events from `raw_data` into input buckets (batch mode).
   - Step 2: For each event, runs all 4 renders in sequence, then moves to next event.
   - Step 3: Publishes final files directly under `output/`.
-- `python main.py make-videos --event "2026-Sample-Festival"`
+- `python3 main.py make-videos --event "2026-Sample-Festival"`
   - Same pipeline, but only for one specific event folder.
 
 Final output naming convention in `output/`:

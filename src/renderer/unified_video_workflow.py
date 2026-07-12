@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 import yaml
 from loguru import logger
+from PIL import Image
 
 from src.config.config_models import Settings
 from src.effects.color_presets import ColorPresetValues, resolve_color_preset
@@ -122,6 +123,7 @@ class UnifiedVideoProcessingEngine:
         self._settings = settings
         self._rng = random.Random(random_seed)
         self._run_command = command_runner if command_runner is not None else self._default_run_command
+        self._drawtext_supported: bool | None = None
         self._raw_config = self._read_raw_config()
         self._color_values = resolve_color_preset(settings=settings, raw_config=self._raw_config)
 
@@ -188,7 +190,7 @@ class UnifiedVideoProcessingEngine:
             logger.warning("Skipped event because timeline generation returned no plans | event={}", event_name)
             return None
 
-        output_root = self._settings.project_root / self._settings.paths.output / render_profile.output_bucket / event_name
+        output_root = self._settings.project_root / self._settings.paths.temp / render_profile.output_bucket / event_name
         output_root.mkdir(parents=True, exist_ok=True)
 
         music_plan = self._build_music_plan(total_duration=max(plan.total_duration for plan in timelines), enabled=render_profile.music_enabled)
@@ -1001,19 +1003,13 @@ class UnifiedVideoProcessingEngine:
         current = source_label
 
         if mode == "short":
-            header = self._settings.project_root / self._settings.overlays.header.file
-            footer = self._settings.project_root / self._settings.overlays.footer.file
-            if self._settings.overlays.header.enabled and header.exists():
-                parts.append(f"movie={_ff_escape(str(header))},format=rgba[h1]")
-                parts.append(f"[{current}][h1]overlay=x=(W-w)/2:y={self._settings.overlays.header.margin_top}:format=auto[vh]")
+            overlay = self._settings.project_root / self._settings.overlays.header.file
+            if self._settings.overlays.header.enabled and self._is_valid_overlay_image(overlay):
+                parts.append(f"movie={_ff_escape(str(overlay))},format=rgba[o1]")
+                parts.append(f"[{current}][o1]overlay=x=0:y=0:format=auto[vh]")
                 current = "vh"
-            if self._settings.overlays.footer.enabled and footer.exists():
-                footer_y = f"H-h-{self._settings.overlays.footer.margin_bottom}"
-                parts.append(f"movie={_ff_escape(str(footer))},format=rgba[f1]")
-                parts.append(f"[{current}][f1]overlay=x=(W-w)/2:y={footer_y}:format=auto[vf]")
-                current = "vf"
 
-            if profile.opening_title_seconds > 0:
+            if profile.opening_title_seconds > 0 and self._supports_drawtext():
                 title = _ff_escape(event_name.upper())
                 font_path = _ff_escape(str(self._settings.project_root / self._settings.text_overlay.font))
                 seconds = profile.opening_title_seconds
@@ -1030,12 +1026,12 @@ class UnifiedVideoProcessingEngine:
         socials = self._settings.project_root / self._settings.overlays.socials.file
         website = self._settings.project_root / self._settings.overlays.website.file
 
-        if self._settings.overlays.socials.enabled and socials.exists():
+        if self._settings.overlays.socials.enabled and self._is_valid_overlay_image(socials):
             parts.append(f"movie={_ff_escape(str(socials))},format=rgba[s1]")
             parts.append(f"[{current}][s1]overlay={self._settings.overlays.socials.margin_left}:{self._settings.overlays.socials.margin_top}:format=auto[vs]")
             current = "vs"
 
-        if self._settings.overlays.website.enabled and website.exists():
+        if self._settings.overlays.website.enabled and self._is_valid_overlay_image(website):
             right_margin = self._settings.overlays.website.margin_right
             top_margin = self._settings.overlays.website.margin_top
             parts.append(f"movie={_ff_escape(str(website))},format=rgba[w1]")
@@ -1045,6 +1041,10 @@ class UnifiedVideoProcessingEngine:
         ending_start = max(0.0, total_duration - 5.0)
         font_path = _ff_escape(str(self._settings.project_root / self._settings.text_overlay.font))
         ending_text = _ff_escape(self._settings.text_overlay.opening_title)
+        if not self._supports_drawtext():
+            parts.append(f"[{current}]fade=t=out:st={ending_start}:d=5[vout]")
+            return ";".join(parts)
+
         parts.append(
             f"[{current}]"
             f"drawtext=fontfile='{font_path}':text='{ending_text}':"
@@ -1409,6 +1409,27 @@ class UnifiedVideoProcessingEngine:
     def _default_run_command(self, command: list[str]) -> subprocess.CompletedProcess[str]:
         """Run command via subprocess and capture output."""
         return subprocess.run(command, capture_output=True, text=True, check=False)
+
+    def _supports_drawtext(self) -> bool:
+        """Check whether ffmpeg build supports drawtext filter."""
+        if self._drawtext_supported is not None:
+            return self._drawtext_supported
+
+        completed = self._run_command([self._settings.render.ffmpeg_path, "-hide_banner", "-filters"])
+        output = f"{completed.stdout or ''}\n{completed.stderr or ''}".lower()
+        self._drawtext_supported = completed.returncode == 0 and "drawtext" in output
+        return self._drawtext_supported
+
+    def _is_valid_overlay_image(self, path: Path) -> bool:
+        """Return True when overlay file exists and is a readable image."""
+        if not path.exists() or not path.is_file():
+            return False
+        try:
+            with Image.open(path) as image:
+                image.verify()
+            return True
+        except Exception:
+            return False
 
     def _resolve_color_values(self, profile: RenderProfile) -> ColorPresetValues:
         """Resolve color values from configured preset with explicit profile override."""

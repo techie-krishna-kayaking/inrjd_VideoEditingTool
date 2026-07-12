@@ -26,11 +26,11 @@ paths:
   # Music library folder used for background tracks.
   music: "assets/music"
   # Reports folder for JSON/CSV/summary outputs.
-  reports: "output/reports"
+  reports: "work/reports"
   # Runtime log folder.
-  logs: "output/logs"
+  logs: "work/logs"
   # Temporary working folder for intermediate files.
-  temp: "output/temp"
+  temp: "work/temp"
 
 render:
   # Maximum parallel workers. Product policy allows up to 2.
@@ -179,8 +179,8 @@ overlays:
   header:
     # Enable header overlay.
     enabled: true
-    # Header overlay file path.
-    file: "assets/overlays/shorts_header.png"
+    # Single transparent shorts overlay file (contains header + footer design).
+    file: "assets/overlays/shorts_header_footer.png"
     # Overlay opacity (0.0 to 1.0).
     opacity: 0.95
     # Margin controls in pixels.
@@ -189,8 +189,8 @@ overlays:
     margin_left: 16
     margin_right: 16
   footer:
-    enabled: true
-    file: "assets/overlays/shorts_footer.png"
+    enabled: false
+    file: "assets/overlays/shorts_header_footer.png"
     opacity: 0.95
     margin_top: 0
     margin_bottom: 16

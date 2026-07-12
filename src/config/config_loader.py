@@ -54,9 +54,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "output": "output",
         "assets": "assets",
         "music": "assets/music",
-        "reports": "output/reports",
-        "logs": "output/logs",
-        "temp": "output/temp",
+        "reports": "work/reports",
+        "logs": "work/logs",
+        "temp": "work/temp",
     },
     "render": {
         "workers": 2,
@@ -132,7 +132,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "overlays": {
         "header": {
             "enabled": True,
-            "file": "assets/overlays/shorts_header.png",
+            "file": "assets/overlays/shorts_header_footer.png",
             "opacity": 0.95,
             "margin_top": 16,
             "margin_bottom": 0,
@@ -140,8 +140,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "margin_right": 16,
         },
         "footer": {
-            "enabled": True,
-            "file": "assets/overlays/shorts_footer.png",
+            "enabled": False,
+            "file": "assets/overlays/shorts_header_footer.png",
             "opacity": 0.95,
             "margin_top": 0,
             "margin_bottom": 16,

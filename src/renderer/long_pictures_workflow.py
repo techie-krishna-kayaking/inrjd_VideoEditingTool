@@ -53,6 +53,7 @@ class LongPicturesWorkflow:
         self._settings = settings
         self._rng = random.Random(random_seed)
         self._run_command = command_runner if command_runner is not None else self._default_run_command
+        self._drawtext_supported: bool | None = None
         self._slideshow_engine = SlideshowEngine(
             cache_dir=settings.project_root / settings.paths.temp / "slideshow_cache_long",
             random_seed=random_seed,
@@ -94,7 +95,7 @@ class LongPicturesWorkflow:
             logger.warning("Skipped event with no long-form source images | event={}", event_name)
             return None
 
-        output_dir = self._settings.project_root / self._settings.paths.output / "long" / event_name
+        output_dir = self._settings.project_root / self._settings.paths.temp / "long" / event_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
         order_mode = str(profile_cfg.get("image_order", "chronological_exif")).strip().lower()
@@ -104,6 +105,10 @@ class LongPicturesWorkflow:
         default_duration = float(self._settings.long.duration.default)
         max_duration = float(self._settings.long.duration.maximum)
         target_duration = _clamp(float(profile_cfg.get("target_duration", default_duration)), min_duration, max_duration)
+        # Keep long-picture timeline bounded to available image material so ffmpeg
+        # graph size remains practical even with short random durations.
+        max_practical_duration = max(1.0, len(ordered_images) * 1.5)
+        target_duration = min(target_duration, max_practical_duration)
 
         transition_selector = _TransitionSelector(
             random_source=self._rng,
@@ -147,7 +152,7 @@ class LongPicturesWorkflow:
         )
         render_time = time.perf_counter() - started
 
-        thumbnail_dir = self._settings.project_root / self._settings.paths.output / "thumbnails"
+        thumbnail_dir = self._settings.project_root / self._settings.paths.temp / "thumbnails"
         thumbnail_dir.mkdir(parents=True, exist_ok=True)
         thumbnail_path = thumbnail_dir / f"{event_name}-thumbnail.jpg"
         self._write_thumbnail(timeline, thumbnail_path)
@@ -202,15 +207,18 @@ class LongPicturesWorkflow:
             duration_options=DurationOptions(
                 image_duration=1.0,
                 random_duration=True,
-                minimum=0.5,
-                maximum=1.5,
-                duration_choices=(0.5, 1.0, 1.5),
+                minimum=1.2,
+                maximum=2.2,
+                duration_choices=(1.2, 1.6, 2.0),
             ),
             animation_options=AnimationOptions(
                 enabled=True,
                 random_per_image=True,
+                allowed=("zoom_in", "zoom_out", "pan_left", "pan_right"),
                 random_mode=True,
                 default_animation="zoom_in",
+                zoom_min=1.04,
+                zoom_max=1.12,
             ),
             color_options=ColorEffectOptions(
                 brightness=self._settings.color_grading.brightness,
@@ -325,7 +333,11 @@ class LongPicturesWorkflow:
             animation_name = str(clip.animation.get("name", "zoom_in"))
             zoom = float(clip.animation.get("zoom", 1.06))
             frame_count = max(1, int(round(clip.duration * fps)))
-            zoom_expr, x_expr, y_expr = _zoompan_expressions(animation_name=animation_name, zoom=zoom)
+            zoom_expr, x_expr, y_expr = _zoompan_expressions(
+                animation_name=animation_name,
+                zoom=zoom,
+                frame_count=frame_count,
+            )
 
             label = f"v{index}"
             chain = (
@@ -340,21 +352,32 @@ class LongPicturesWorkflow:
 
         current = clip_labels[0]
         elapsed = clips.clips[0].duration
+        previous_offset = 0.0
 
         for index in range(1, len(clip_labels)):
             nxt = clip_labels[index]
             out = f"x{index}"
-            offset = max(0.0, elapsed - transition_duration)
+            prev_clip_duration = max(0.1, float(clips.clips[index - 1].duration))
+            curr_clip_duration = max(0.1, float(clips.clips[index].duration))
             plan_transition = transition_plan[index - 1] if index - 1 < len(transition_plan) else _TransitionChoice(
                 "cross_dissolve", "fade"
             )
             transition_name = plan_transition.ffmpeg_name if plan_transition.label != "hard_cut" else "fade"
-            duration = transition_duration if plan_transition.label != "hard_cut" else 0.001
+            if plan_transition.label == "hard_cut":
+                duration = 0.001
+            else:
+                duration = min(
+                    transition_duration,
+                    max(0.001, prev_clip_duration - 0.001),
+                    max(0.001, curr_clip_duration - 0.001),
+                )
+            offset = max(previous_offset, max(0.0, elapsed - duration))
             parts.append(
                 f"[{current}][{nxt}]xfade=transition={transition_name}:duration={duration}:offset={offset}[{out}]"
             )
             current = out
             elapsed += clips.clips[index].duration - duration
+            previous_offset = offset
 
         parts.append(
             self._overlay_chain(
@@ -386,17 +409,21 @@ class LongPicturesWorkflow:
         parts: list[str] = []
         current = video_label
 
-        if socials.exists():
+        if self._is_valid_overlay_image(socials):
             parts.append(f"movie={_ff_escape(str(socials))},scale=iw*0.35:-1[soc]")
             parts.append(f"[{current}][soc]overlay=20:20:format=auto[vs]")
             current = "vs"
 
-        if website.exists():
+        if self._is_valid_overlay_image(website):
             parts.append(f"movie={_ff_escape(str(website))},scale=iw*0.35:-1[web]")
             parts.append(f"[{current}][web]overlay=W-w-20:20:format=auto[vw]")
             current = "vw"
 
         ending_start = max(0.0, total_duration - 5.0)
+
+        if not self._supports_drawtext():
+            parts.append(f"[{current}]fade=t=out:st={ending_start}:d=5[vout]")
+            return ";".join(parts)
 
         parts.append(
             f"[{current}]"
@@ -599,6 +626,27 @@ class LongPicturesWorkflow:
         """Run shell command and capture text output."""
         return subprocess.run(command, capture_output=True, text=True, check=False)
 
+    def _supports_drawtext(self) -> bool:
+        """Check whether ffmpeg build supports drawtext filter."""
+        if self._drawtext_supported is not None:
+            return self._drawtext_supported
+
+        completed = self._run_command([self._settings.render.ffmpeg_path, "-hide_banner", "-filters"])
+        output = f"{completed.stdout or ''}\n{completed.stderr or ''}".lower()
+        self._drawtext_supported = completed.returncode == 0 and "drawtext" in output
+        return self._drawtext_supported
+
+    def _is_valid_overlay_image(self, path: Path) -> bool:
+        """Return True when overlay file exists and is a readable image."""
+        if not path.exists() or not path.is_file():
+            return False
+        try:
+            with Image.open(path) as image:
+                image.verify()
+            return True
+        except Exception:
+            return False
+
 
 class _TransitionSelector:
     """Transition picker honoring configured probabilities and no-repeat rule."""
@@ -644,48 +692,34 @@ class _TransitionSelector:
         return [self.choose() for _ in range(count)]
 
 
-def _zoompan_expressions(animation_name: str, zoom: float) -> tuple[str, str, str]:
-    """Return zoompan expressions for supported animation names."""
-    base_zoom = max(1.01, min(1.2, zoom))
+def _zoompan_expressions(animation_name: str, zoom: float, frame_count: int) -> tuple[str, str, str]:
+    """Return smooth zoompan expressions using eased 0..1 timeline progress."""
+    base_zoom = max(1.04, min(1.18, zoom))
+    normalized_frames = max(2, frame_count)
+    progress = f"min(1,max(0,on/{normalized_frames - 1}))"
+    eased = f"({progress}*{progress}*(3-2*{progress}))"
+
     if animation_name == "zoom_out":
         return (
-            f"if(eq(on,1),{base_zoom},max(1.0,zoom-0.0007))",
+            f"{base_zoom}-({base_zoom}-1.0)*{eased}",
             "iw/2-(iw/zoom/2)",
             "ih/2-(ih/zoom/2)",
         )
     if animation_name == "pan_left":
         return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.00045))",
-            "(iw-iw/zoom)*(1-on/500)",
+            f"1.03+({base_zoom}-1.03)*{eased}",
+            f"(iw-iw/zoom)*(1-{eased})",
             "ih/2-(ih/zoom/2)",
         )
     if animation_name == "pan_right":
         return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.00045))",
-            "(iw-iw/zoom)*(on/500)",
+            f"1.03+({base_zoom}-1.03)*{eased}",
+            f"(iw-iw/zoom)*{eased}",
             "ih/2-(ih/zoom/2)",
-        )
-    if animation_name == "pan_up":
-        return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.00045))",
-            "iw/2-(iw/zoom/2)",
-            "(ih-ih/zoom)*(1-on/500)",
-        )
-    if animation_name == "pan_down":
-        return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.00045))",
-            "iw/2-(iw/zoom/2)",
-            "(ih-ih/zoom)*(on/500)",
-        )
-    if animation_name == "diagonal":
-        return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.00045))",
-            "(iw-iw/zoom)*(on/500)",
-            "(ih-ih/zoom)*(on/500)",
         )
 
     return (
-        f"if(eq(on,1),1.0,min({base_zoom},zoom+0.0006))",
+        f"1.0+({base_zoom}-1.0)*{eased}",
         "iw/2-(iw/zoom/2)",
         "ih/2-(ih/zoom/2)",
     )

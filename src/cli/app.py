@@ -161,6 +161,11 @@ def create_cli(settings: Settings) -> typer.Typer:
         event: str | None = typer.Option(None, "--event", help="Render one event only (default: all events in batch)."),
         profile: str | None = typer.Option(None, "--profile", help="Optional YAML profile name for video workflows."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Preview unified video timelines without ffmpeg rendering."),
+        keep_intermediate: bool = typer.Option(
+            False,
+            "--keep-intermediate",
+            help="Keep intermediate folders (shorts/long/logs/reports/temp/thumbnails).",
+        ),
     ) -> None:
         """Run one-command pipeline: organize first, then render all 4 outputs per event."""
         exit_code = run_make_videos_command(
@@ -168,6 +173,7 @@ def create_cli(settings: Settings) -> typer.Typer:
             event_name=event,
             profile=profile,
             dry_run=dry_run,
+            keep_intermediate=keep_intermediate,
             console=console,
         )
         if exit_code != 0:
@@ -178,6 +184,11 @@ def create_cli(settings: Settings) -> typer.Typer:
         event: str | None = typer.Option(None, "--event", help="Render one event only (default: all events in batch)."),
         profile: str | None = typer.Option(None, "--profile", help="Optional YAML profile name for video workflows."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Preview unified video timelines without ffmpeg rendering."),
+        keep_intermediate: bool = typer.Option(
+            False,
+            "--keep-intermediate",
+            help="Keep intermediate folders (shorts/long/logs/reports/temp/thumbnails).",
+        ),
     ) -> None:
         """Step-2 command: render/publish final videos after running organize."""
         exit_code = run_render_final_videos_command(
@@ -185,6 +196,7 @@ def create_cli(settings: Settings) -> typer.Typer:
             event_name=event,
             profile=profile,
             dry_run=dry_run,
+            keep_intermediate=keep_intermediate,
             console=console,
         )
         if exit_code != 0:

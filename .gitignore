@@ -1,0 +1,9 @@
+# Ignore local media workspaces and generated artifacts
+raw_data/**
+input/**
+output/**
+
+# Keep the empty folder placeholders tracked
+!raw_data/.gitkeep
+!input/.gitkeep
+!output/.gitkeep

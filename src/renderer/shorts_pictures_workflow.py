@@ -13,6 +13,7 @@ from typing import Callable
 
 import yaml
 from loguru import logger
+from PIL import Image
 
 from src.config.config_models import Settings
 from src.image.image_animator import AnimationOptions
@@ -52,6 +53,7 @@ class ShortsPicturesWorkflow:
         self._settings = settings
         self._rng = random.Random(random_seed)
         self._run_command = command_runner if command_runner is not None else self._default_run_command
+        self._drawtext_supported: bool | None = None
         self._slideshow_engine = SlideshowEngine(
             cache_dir=settings.project_root / settings.paths.temp / "slideshow_cache",
             random_seed=random_seed,
@@ -92,7 +94,7 @@ class ShortsPicturesWorkflow:
             logger.warning("Skipped event with no source images | event={}", event_name)
             return None
 
-        output_dir = self._settings.project_root / self._settings.paths.output / "shorts" / event_name
+        output_dir = self._settings.project_root / self._settings.paths.temp / "shorts" / event_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
         default_duration = float(self._settings.shorts.duration.default)
@@ -101,6 +103,10 @@ class ShortsPicturesWorkflow:
         image_duration = float(self._settings.images.image_duration)
 
         target_duration = _clamp(default_duration, min_duration, max_duration)
+        # Keep picture timeline bounded to available image material when using
+        # very short random durations to avoid oversized ffmpeg graphs.
+        max_practical_duration = max(1.0, len(image_paths) * 1.5)
+        target_duration = min(target_duration, max_practical_duration)
         images_per_part = max(1, int(target_duration / max(0.1, image_duration)))
 
         ordered = list(image_paths)
@@ -212,15 +218,18 @@ class ShortsPicturesWorkflow:
             duration_options=DurationOptions(
                 image_duration=self._settings.images.image_duration,
                 random_duration=True,
-                minimum=0.5,
-                maximum=1.5,
-                duration_choices=(0.5, 1.0, 1.5),
+                minimum=1.2,
+                maximum=2.2,
+                duration_choices=(1.2, 1.6, 2.0),
             ),
             animation_options=AnimationOptions(
                 enabled=True,
                 random_per_image=True,
+                allowed=("zoom_in", "zoom_out", "pan_left", "pan_right"),
                 random_mode=True,
                 default_animation="zoom_in",
+                zoom_min=1.04,
+                zoom_max=1.12,
             ),
             color_options=ColorEffectOptions(
                 brightness=self._settings.color_grading.brightness,
@@ -351,7 +360,11 @@ class ShortsPicturesWorkflow:
             animation_name = str(clip.animation.get("name", "zoom_in"))
             zoom = float(clip.animation.get("zoom", 1.06))
             frame_count = max(1, int(round(clip.duration * fps)))
-            zoom_expr, x_expr, y_expr = _zoompan_expressions(animation_name=animation_name, zoom=zoom)
+            zoom_expr, x_expr, y_expr = _zoompan_expressions(
+                animation_name=animation_name,
+                zoom=zoom,
+                frame_count=frame_count,
+            )
 
             label = f"v{index}"
             filter_chain = (
@@ -366,22 +379,33 @@ class ShortsPicturesWorkflow:
 
         current_label = clip_labels[0]
         elapsed = clips.clips[0].duration
+        previous_offset = 0.0
 
         for index in range(1, len(clip_labels)):
             next_label = clip_labels[index]
             out_label = f"x{index}"
-            offset = max(0.0, elapsed - transition_duration)
+            prev_clip_duration = max(0.1, float(clips.clips[index - 1].duration))
+            curr_clip_duration = max(0.1, float(clips.clips[index].duration))
             plan_transition = transition_plan[index - 1] if index - 1 < len(transition_plan) else _TransitionChoice(
                 "cross_dissolve", "fade"
             )
             transition_name = plan_transition.ffmpeg_name if plan_transition.label != "hard_cut" else "fade"
-            duration = transition_duration if plan_transition.label != "hard_cut" else 0.001
+            if plan_transition.label == "hard_cut":
+                duration = 0.001
+            else:
+                duration = min(
+                    transition_duration,
+                    max(0.001, prev_clip_duration - 0.001),
+                    max(0.001, curr_clip_duration - 0.001),
+                )
+            offset = max(previous_offset, max(0.0, elapsed - duration))
 
             parts.append(
                 f"[{current_label}][{next_label}]xfade=transition={transition_name}:duration={duration}:offset={offset}[{out_label}]"
             )
             current_label = out_label
             elapsed += clips.clips[index].duration - duration
+            previous_offset = offset
 
         overlay_chain = self._overlay_and_title_chain(
             video_label=current_label,
@@ -396,27 +420,22 @@ class ShortsPicturesWorkflow:
 
     def _overlay_and_title_chain(self, video_label: str, width: int, height: int, title_text: str, fps: int) -> str:
         """Build overlay and opening-title chain with fade and shadow."""
-        assets_root = self._settings.project_root / self._settings.paths.assets / "overlays"
-        header_path = assets_root / "shorts_header.png"
-        footer_path = assets_root / "shorts_footer.png"
+        overlay_path = self._settings.project_root / self._settings.overlays.header.file
         font_path = self._settings.project_root / self._settings.text_overlay.font
 
         filters: list[str] = []
         current = video_label
 
-        if header_path.exists():
+        if self._is_valid_overlay_image(overlay_path):
             filters.append(
-                f"movie={_ff_escape(str(header_path))},scale={width}:-1[hdr]"
+                f"movie={_ff_escape(str(overlay_path))},scale={width}:{height}:flags=lanczos[ovl]"
             )
-            filters.append(f"[{current}][hdr]overlay=(W-w)/2:0:format=auto[vh]")
+            filters.append(f"[{current}][ovl]overlay=0:0:format=auto[vh]")
             current = "vh"
 
-        if footer_path.exists():
-            filters.append(
-                f"movie={_ff_escape(str(footer_path))},scale={width}:-1[ftr]"
-            )
-            filters.append(f"[{current}][ftr]overlay=(W-w)/2:H-h:format=auto[vf]")
-            current = "vf"
+        if not self._supports_drawtext():
+            filters.append(f"[{current}]format=yuv420p[vout]")
+            return ";".join(filters)
 
         draw_chain = (
             f"[{current}]"
@@ -486,6 +505,27 @@ class ShortsPicturesWorkflow:
         """Run shell command and capture text output."""
         return subprocess.run(command, capture_output=True, text=True, check=False)
 
+    def _supports_drawtext(self) -> bool:
+        """Check whether ffmpeg build supports drawtext filter."""
+        if self._drawtext_supported is not None:
+            return self._drawtext_supported
+
+        completed = self._run_command([self._settings.render.ffmpeg_path, "-hide_banner", "-filters"])
+        output = f"{completed.stdout or ''}\n{completed.stderr or ''}".lower()
+        self._drawtext_supported = completed.returncode == 0 and "drawtext" in output
+        return self._drawtext_supported
+
+    def _is_valid_overlay_image(self, path: Path) -> bool:
+        """Return True when overlay file exists and is a readable image."""
+        if not path.exists() or not path.is_file():
+            return False
+        try:
+            with Image.open(path) as image:
+                image.verify()
+            return True
+        except Exception:
+            return False
+
 
 class _TransitionSelector:
     """Transition picker honoring configured probabilities and no-repeat rule."""
@@ -531,48 +571,34 @@ class _TransitionSelector:
         return [self.choose() for _ in range(count)]
 
 
-def _zoompan_expressions(animation_name: str, zoom: float) -> tuple[str, str, str]:
-    """Return zoompan expressions for supported animation names."""
-    base_zoom = max(1.01, min(1.2, zoom))
+def _zoompan_expressions(animation_name: str, zoom: float, frame_count: int) -> tuple[str, str, str]:
+    """Return smooth zoompan expressions using eased 0..1 timeline progress."""
+    base_zoom = max(1.04, min(1.18, zoom))
+    normalized_frames = max(2, frame_count)
+    progress = f"min(1,max(0,on/{normalized_frames - 1}))"
+    eased = f"({progress}*{progress}*(3-2*{progress}))"
+
     if animation_name == "zoom_out":
         return (
-            f"if(eq(on,1),{base_zoom},max(1.0,zoom-0.0008))",
+            f"{base_zoom}-({base_zoom}-1.0)*{eased}",
             "iw/2-(iw/zoom/2)",
             "ih/2-(ih/zoom/2)",
         )
     if animation_name == "pan_left":
         return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.0005))",
-            "(iw-iw/zoom)*(1-on/300)",
+            f"1.03+({base_zoom}-1.03)*{eased}",
+            f"(iw-iw/zoom)*(1-{eased})",
             "ih/2-(ih/zoom/2)",
         )
     if animation_name == "pan_right":
         return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.0005))",
-            "(iw-iw/zoom)*(on/300)",
+            f"1.03+({base_zoom}-1.03)*{eased}",
+            f"(iw-iw/zoom)*{eased}",
             "ih/2-(ih/zoom/2)",
-        )
-    if animation_name == "pan_up":
-        return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.0005))",
-            "iw/2-(iw/zoom/2)",
-            "(ih-ih/zoom)*(1-on/300)",
-        )
-    if animation_name == "pan_down":
-        return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.0005))",
-            "iw/2-(iw/zoom/2)",
-            "(ih-ih/zoom)*(on/300)",
-        )
-    if animation_name == "diagonal":
-        return (
-            f"if(eq(on,1),1.0,min({base_zoom},zoom+0.0005))",
-            "(iw-iw/zoom)*(on/300)",
-            "(ih-ih/zoom)*(on/300)",
         )
 
     return (
-        f"if(eq(on,1),1.0,min({base_zoom},zoom+0.0007))",
+        f"1.0+({base_zoom}-1.0)*{eased}",
         "iw/2-(iw/zoom/2)",
         "ih/2-(ih/zoom/2)",
     )

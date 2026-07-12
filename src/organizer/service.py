@@ -217,10 +217,10 @@ class MediaOrganizer:
         return "rejected"
 
     def _is_portrait(self, entry: AnalyzerMediaEntry) -> bool:
-        """Treat media as portrait when height is greater or equal to width."""
+        """Treat media as portrait when height is greater than width."""
         if entry.width is None or entry.height is None:
             return False
-        return entry.height >= entry.width
+        return entry.height > entry.width
 
     def _build_destination_path(self, source_path: Path, destination_dir: Path) -> Path:
         """Build unique destination path without renaming original source files."""
